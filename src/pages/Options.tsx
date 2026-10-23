@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { AppAlertDialog } from "@/components/app-alert-dialog";
+import { Button } from "@/components/ui/button";
 import {
   Field,
   FieldContent,
@@ -32,6 +34,7 @@ type OptionsProps = {
   onShortcutModifierChange: (shortcutModifier: ShortcutModifier) => void;
   animations: boolean;
   onAnimationsChange: (animations: boolean) => void;
+  onSignOut?: () => Promise<void>;
 };
 
 export default function Options({
@@ -45,10 +48,13 @@ export default function Options({
   onShortcutModifierChange,
   animations,
   onAnimationsChange,
+  onSignOut,
 }: OptionsProps) {
   const [theme, setTheme] = useState<Theme>(() =>
     document.documentElement.classList.contains("dark") ? "dark" : "light",
   );
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState(false);
 
   function handleThemeChange(checked: boolean) {
     const next: Theme = checked ? "dark" : "light";
@@ -57,6 +63,19 @@ export default function Options({
     saveTheme(next).catch((error) =>
       console.error("Could not save theme", error),
     );
+  }
+
+  async function handleSignOut() {
+    if (!onSignOut) return;
+    setSigningOut(true);
+    setSignOutError(false);
+    try {
+      await onSignOut();
+    } catch (error) {
+      console.error("Could not sign out of ZTM Academy", error);
+      setSignOutError(true);
+      setSigningOut(false);
+    }
   }
 
   return (
@@ -165,6 +184,30 @@ export default function Options({
           ))}
         </NativeSelect>
       </Field>
+      {onSignOut && (
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldLabel>Academy account</FieldLabel>
+            <FieldDescription>
+              Clear your Academy session and return to the sign-in screen.
+            </FieldDescription>
+          </FieldContent>
+          <Button
+            variant="destructive"
+            disabled={signingOut}
+            onClick={handleSignOut}
+          >
+            {signingOut ? "Signing out…" : "Sign out"}
+          </Button>
+        </Field>
+      )}
+      <AppAlertDialog
+        open={signOutError}
+        onOpenChange={setSignOutError}
+        title="Could not sign out"
+        description="Your Academy session could not be cleared. Please try again."
+        action={{ label: "Try again", onClick: handleSignOut }}
+      />
     </section>
   );
 }

@@ -273,6 +273,94 @@ test("the dashboard stays hidden until Academy authentication succeeds", async (
   await expect(page.getByRole("button", { name: "Dashboard" })).toBeVisible();
 });
 
+test("signing out clears the Academy session and returns to the authentication gate", async ({
+  page,
+}) => {
+  const authenticationShowsBefore = await page.evaluate(() =>
+    (
+      globalThis as typeof globalThis & { __TAURI_CALLS__: InvokeCall[] }
+    ).__TAURI_CALLS__.filter(
+      (call) =>
+        call.command === "show_web_view" && call.args.authCheck === true,
+    ).length,
+  );
+
+  await page.getByRole("button", { name: "Options" }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          globalThis as typeof globalThis & { __TAURI_CALLS__: InvokeCall[] }
+        ).__TAURI_CALLS__.some((call) => call.command === "sign_out"),
+      ),
+    )
+    .toBe(true);
+  await expect(
+    page.getByRole("heading", { name: "Sign in to ZTM Academy" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dashboard" })).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          globalThis as typeof globalThis & { __TAURI_CALLS__: InvokeCall[] }
+        ).__TAURI_CALLS__.filter(
+          (call) =>
+            call.command === "show_web_view" && call.args.authCheck === true,
+        ).length,
+      ),
+    )
+    .toBeGreaterThan(authenticationShowsBefore);
+});
+
+test("a failed sign-out keeps the app unlocked and offers a retry", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    (
+      globalThis as typeof globalThis & {
+        __delayTauriRejection: (command: string) => void;
+      }
+    ).__delayTauriRejection("sign_out");
+  });
+
+  await page.getByRole("button", { name: "Options" }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  await expect
+    .poll(() =>
+      page.locator('[data-slot="sidebar-wrapper"]').evaluate(
+        (element) => (element as HTMLElement).inert,
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() =>
+    (
+      globalThis as typeof globalThis & {
+        __releaseTauriRejection: (command: string) => void;
+      }
+    ).__releaseTauriRejection("sign_out"),
+  );
+
+  const dialog = page.getByRole("alertdialog", { name: "Could not sign out" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Try again" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Dismiss" }).click();
+  await expect(page.getByRole("button", { name: "Dashboard" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Sign in to ZTM Academy" }),
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.locator('[data-slot="sidebar-wrapper"]').evaluate(
+        (element) => (element as HTMLElement).inert,
+      ),
+    )
+    .toBe(false);
+});
+
 test("the resolved system theme is synchronized to native Academy views", async ({
   page,
 }) => {

@@ -17,6 +17,7 @@ const defaultCapability = JSON.parse(
 test("the app shell is permitted to hide and dispose its native child webview", () => {
   assert.ok(defaultCapability.permissions.includes("allow-dispose-web-view"));
   assert.ok(defaultCapability.permissions.includes("allow-hide-web-view"));
+  assert.ok(defaultCapability.permissions.includes("allow-sign-out"));
 });
 
 function runAcademyScript(
@@ -562,10 +563,25 @@ test("only course-content webviews initialize the progress relay in every frame"
     rust.match(/initialization_script_for_all_frames/g)?.length,
     3,
   );
-  assert.match(
-    rust,
-    /if close_on_authentication\s*\{\s*builder\s*\}\s*else\s*\{\s*builder\.initialization_script_for_all_frames/,
+  const authenticationWindow = rust.slice(
+    rust.indexOf("fn build_authentication_window"),
+    rust.indexOf("pub async fn sign_out"),
   );
+  assert.doesNotMatch(authenticationWindow, /initialization_script_for_all_frames/);
+});
+
+test("sign-out removes cookies without erasing saved Academy progress", () => {
+  const rust = readFileSync(
+    new URL("../src-tauri/src/web_view.rs", import.meta.url),
+    "utf8",
+  );
+  const signOut = rust.slice(
+    rust.indexOf("pub async fn sign_out"),
+    rust.indexOf("fn show_course_window"),
+  );
+
+  assert.match(signOut, /delete_cookie/);
+  assert.doesNotMatch(signOut, /clear_all_browsing_data/);
 });
 
 test("the desktop pause hook pauses top-frame media and notifies frames", () => {

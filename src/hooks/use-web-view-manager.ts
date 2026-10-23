@@ -41,6 +41,14 @@ function boundsOf(element: HTMLElement, sidebarTooltipOpen = false): Bounds {
 // and stop two show calls from both creating the webview. The chain lives at
 // module scope so it stays ordered across unmount and remount.
 let pending: Promise<unknown> = Promise.resolve();
+
+/** Clears the Academy session after all previously queued view work has settled. */
+export function signOutAcademySession(): Promise<void> {
+  const operation = pending.then(() => invoke("sign_out"));
+  pending = operation.catch(() => undefined);
+  return operation.then(() => undefined);
+}
+
 function enqueue(
   command: string,
   args?: {

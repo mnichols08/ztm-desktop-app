@@ -460,6 +460,72 @@ pub async fn open_course_window<R: Runtime>(
     show_course_window(&app, url, None, theme, false)
 }
 
+fn build_authentication_window<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    url: Url,
+    theme: WebTheme,
+    visible: bool,
+) -> Result<tauri::WebviewWindow<R>, String> {
+    let authentication_app = app.clone();
+    let builder = WebviewWindowBuilder::new(app, COURSE_WINDOW_LABEL, WebviewUrl::External(url))
+        .title("ZTM Academy")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(480.0, 360.0)
+        .visible(visible)
+        .theme(Some(theme.tauri()))
+        .on_page_load(move |window, payload| {
+            let authenticated = payload.event() == PageLoadEvent::Finished
+                && is_authenticated_academy_url(payload.url());
+            report_authentication(&authentication_app, payload.event(), payload.url());
+            if authenticated {
+                let _ = window.destroy();
+            }
+        });
+    #[cfg(target_os = "linux")]
+    let builder = builder.data_directory(
+        app.path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?
+            .join(ACADEMY_DATA_DIR),
+    );
+    builder.build().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn sign_out<R: Runtime>(
+    window: Window<R>,
+    theme: State<'_, WebViewTheme>,
+) -> Result<(), String> {
+    let app = window.app_handle();
+    destroy_fullscreen(app)?;
+    if let Some(webview) = window.get_webview(LABEL) {
+        webview.close().map_err(|e| e.to_string())?;
+    }
+    if let Some(course_window) = app.get_webview_window(COURSE_WINDOW_LABEL) {
+        course_window.destroy().map_err(|e| e.to_string())?;
+    }
+
+    // Cookie removal signs out without erasing Academy local storage, which contains
+    // the user's durable lesson and playback checkpoints.
+    let blank = "about:blank".parse().map_err(|e| format!("{e}"))?;
+    let theme = *theme.0.lock().map_err(|e| e.to_string())?;
+    let authentication = build_authentication_window(app, blank, theme, false)?;
+    for cookie in authentication.cookies().map_err(|e| e.to_string())? {
+        authentication
+            .delete_cookie(cookie)
+            .map_err(|e| e.to_string())?;
+    }
+    if authentication
+        .cookies()
+        .map_err(|e| e.to_string())?
+        .is_empty()
+    {
+        Ok(())
+    } else {
+        Err("Could not clear Academy session cookies.".into())
+    }
+}
+
 fn show_course_window<R: Runtime>(
     app: &tauri::AppHandle<R>,
     url: Url,
@@ -485,53 +551,46 @@ fn show_course_window<R: Runtime>(
         let _ = window.set_focus();
         return Ok(());
     }
-    let authentication_app = app.clone();
+    if close_on_authentication {
+        return build_authentication_window(app, url, theme, true).map(|_| ());
+    }
     #[cfg(target_os = "linux")]
     let enhancement_app = app.clone();
     let builder = WebviewWindowBuilder::new(app, COURSE_WINDOW_LABEL, WebviewUrl::External(url))
         .title("ZTM Academy")
         .inner_size(1280.0, 800.0)
         .min_inner_size(480.0, 360.0)
-        .theme(Some(theme.tauri()))
-        .on_page_load(move |window, payload| {
-            #[cfg(target_os = "linux")]
-            if payload.event() == PageLoadEvent::Finished && should_enhance_page(payload.url()) {
-                let result = (|| {
-                    let theme = *enhancement_app
-                        .state::<WebViewTheme>()
-                        .0
-                        .lock()
-                        .map_err(|error| error.to_string())?;
-                    let script = {
-                        let pending = enhancement_app.state::<PendingCourseSession>();
-                        let mut session = pending.0.lock().map_err(|error| error.to_string())?;
-                        page_enhancement_script(
-                            "window",
-                            payload.event(),
-                            payload.url(),
-                            &mut session,
-                            theme,
-                        )
-                    };
-                    if let Some(script) = script {
-                        window.eval(script).map_err(|error| error.to_string())?;
-                    }
-                    Ok::<_, String>(())
-                })();
-                if let Err(error) = result {
-                    eprintln!("failed to enhance Linux Academy page: {error}");
+        .theme(Some(theme.tauri()));
+    #[cfg(target_os = "linux")]
+    let builder = builder.on_page_load(move |window, payload| {
+        if payload.event() == PageLoadEvent::Finished && should_enhance_page(payload.url()) {
+            let result = (|| {
+                let theme = *enhancement_app
+                    .state::<WebViewTheme>()
+                    .0
+                    .lock()
+                    .map_err(|error| error.to_string())?;
+                let script = {
+                    let pending = enhancement_app.state::<PendingCourseSession>();
+                    let mut session = pending.0.lock().map_err(|error| error.to_string())?;
+                    page_enhancement_script(
+                        "window",
+                        payload.event(),
+                        payload.url(),
+                        &mut session,
+                        theme,
+                    )
+                };
+                if let Some(script) = script {
+                    window.eval(script).map_err(|error| error.to_string())?;
                 }
+                Ok::<_, String>(())
+            })();
+            if let Err(error) = result {
+                eprintln!("failed to enhance Linux Academy page: {error}");
             }
-
-            let authenticated = payload.event() == PageLoadEvent::Finished
-                && is_authenticated_academy_url(payload.url());
-            if close_on_authentication {
-                report_authentication(&authentication_app, payload.event(), payload.url());
-                if authenticated {
-                    let _ = window.destroy();
-                }
-            }
-        });
+        }
+    });
     // Wry's default Linux WebContext has no persistent cookie storage. Give the
     // Academy view an app-owned data directory so a Teachable login survives
     // closing the login window and opening an enrolled course from the dashboard.
@@ -542,19 +601,13 @@ fn show_course_window<R: Runtime>(
             .map_err(|error| error.to_string())?
             .join(ACADEMY_DATA_DIR),
     );
-    // Authentication providers can reject or malfunction when a document-start
-    // script is present. Login windows therefore remain plain on every platform.
-    // Linux course windows also start plain and evaluate the enhancement script
-    // after trusted Academy loads finish.
+    // Linux course windows start plain and evaluate the enhancement script after
+    // trusted Academy loads finish.
     // eval reaches only the top frame: cross-origin player iframes have no media
     // relay, so timestamp capture/restore is limited to top/same-origin players.
     // Windows/macOS retain all-frame document-start injection.
     #[cfg(not(target_os = "linux"))]
-    let builder = if close_on_authentication {
-        builder
-    } else {
-        builder.initialization_script_for_all_frames(init_script("window", None, theme))
-    };
+    let builder = builder.initialization_script_for_all_frames(init_script("window", None, theme));
     builder.build().map(|_| ()).map_err(|e| e.to_string())
 }
 

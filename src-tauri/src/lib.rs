@@ -23,6 +23,7 @@ pub fn run() {
             web_view::hide_web_view,
             web_view::dispose_web_view,
             web_view::open_course_window,
+            web_view::sign_out,
             web_view::web_view_fullscreen,
             web_view::set_web_view_theme
         ])

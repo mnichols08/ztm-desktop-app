@@ -25,9 +25,10 @@ import { useLastCourse } from "@/hooks/use-last-course";
 import { useShortcutModifier } from "@/hooks/use-shortcut-modifier";
 import { useShortcuts } from "@/hooks/use-shortcuts";
 import { useUserName } from "@/hooks/use-user-name";
-import type {
-  WebViewRequest,
-  WebViewSession,
+import {
+  signOutAcademySession,
+  type WebViewRequest,
+  type WebViewSession,
 } from "@/hooks/use-web-view-manager";
 import { courseUrl, type Course } from "@/lib/course";
 import { openDiscord } from "@/lib/discord";
@@ -48,6 +49,7 @@ function App() {
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [discordOpenError, setDiscordOpenError] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const { courses, syncing, error, retry } = useCourses();
   const { favourites, toggleFavourite } = useFavourites();
   const { lastCourse, setLastCourse } = useLastCourse();
@@ -93,10 +95,27 @@ function App() {
     }
   }
 
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      await signOutAcademySession();
+    } catch (error) {
+      setSigningOut(false);
+      throw error;
+    }
+    setWebViewRequest(null);
+    setActiveSidebarTooltip(null);
+    setAcademyAuthenticated(false);
+    setAuthenticationReady(true);
+    setSigningOut(false);
+    setSidebarOpen(false);
+    setView("web-view");
+  }
+
   // Shortcuts stay off on the sign-in screen, where there is no sidebar to jump around.
   const showHints = useShortcuts(
     shortcutModifier,
-    academyAuthenticated
+    academyAuthenticated && !signingOut
       ? {
           Digit1: () => selectView("dashboard"),
           Digit2: () => selectView("favourites"),
@@ -184,7 +203,11 @@ function App() {
 
   return (
     <TooltipProvider>
-      <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
+      <SidebarProvider
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        inert={signingOut || undefined}
+      >
         <AppSidebar
           view={view}
           onViewChange={selectView}
@@ -264,6 +287,7 @@ function App() {
               onShortcutModifierChange={setShortcutModifier}
               animations={animations}
               onAnimationsChange={setAnimations}
+              onSignOut={desktop ? handleSignOut : undefined}
             />
           </div>
         </div>

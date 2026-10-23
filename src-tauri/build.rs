@@ -13,6 +13,7 @@ fn main() {
             "hide_web_view",
             "dispose_web_view",
             "open_course_window",
+            "sign_out",
             "web_view_fullscreen",
             "set_web_view_theme",
         ]),

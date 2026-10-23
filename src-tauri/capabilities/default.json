@@ -14,6 +14,7 @@
     "allow-hide-web-view",
     "allow-dispose-web-view",
     "allow-open-course-window",
+    "allow-sign-out",
     "allow-set-web-view-theme",
     "opener:default",
     {
